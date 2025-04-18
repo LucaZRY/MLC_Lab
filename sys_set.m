@@ -2,8 +2,8 @@
 run('quanser_aero_parameters.m');
 run('quanser_aero_state_space.m');
 
-D1 = ultidyn('D_1', [1 1]);
-D2 = ultidyn('D_2',[1 1]);
+Delta_1 = ultidyn('D_1', [1 1]);
+Delta_2 = ultidyn('D_2',[1 1]);
 
 G_unc = minreal(ss(A, B, C, D)); 
 G_nominal = G_unc.NominalValue;
@@ -22,4 +22,6 @@ s = tf('s');
 
 %K = K_h2;
 
-K = K_hinf;
+%K = K_hinf;
+
+K = K_mu;
