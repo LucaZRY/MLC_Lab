@@ -6,7 +6,12 @@ alpha = 0.1;
 W1 = (wc/s) * (s + beta*wc) / (s + wc) * (1 / (alpha*s + 1)) * eye(2);
 
 [K, CL, gam] = loopsyn(G_nominal, W1);
-
+%%
+s = tf('s');
+G_unc = minreal(ss(A, B, C, D)); 
+G_nominal = G_unc.NominalValue;
+G_samples = usample(G_unc,300);
+%%
 wc = 5;            % 目标带宽
 hf = 100;          % 两个高频极，保证可实现
 
