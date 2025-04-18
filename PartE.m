@@ -1,74 +1,91 @@
-% File: partE_mu_synthesis.m
+%% Part E: μ-Synthesis Controller Design (MLC Lab Aero 2025)
+clear; clc; close all;
 
-% Load Parameters and Plant
+% Load Plant Parameters and State-Space Model
 run('quanser_aero_parameters.m');
 run('quanser_aero_state_space.m');
 
-% Build Nominal and Uncertain Plant
-G_unc = ss(A, B, C, D);       % uncertain plant
-G_nom = G_unc.NominalValue;  % nominal plant
+% Create uncertain plant
+G_unc = ss(A, B, C, D);     % Nominal plant
+G_unc = uss(G_unc);         % Convert to uncertain model
+G_unc.InputName = {'u1','u2'};
+G_unc.OutputName = {'y1','y2'};
 
-% Sample-based Uncertainty Fitting
+% Sample and Fit Input Multiplicative Uncertainty
 G_samples = usample(G_unc, 300);
-[~, info] = ucover(G_samples, G_nom, 4, [], 'InputMult');
-W_I = info.W1;                      % multiplicative uncertainty weight
+[~, info] = ucover(G_samples, G_unc.NominalValue, 4, [], 'InputMult');
+W_I = info.W1;
 
-W_I_Pitch = W_I;
-W_I_Yaw   = W_I;
+% Define dynamic uncertainty block
+Delta = ultidyn('Delta', [2 2], 'Bound', 1);
 
-% Define weighting functions (from Part D)
-s = tf('s');
-Wp = ss(blkdiag(1000/(s + 0.33), 1000/(s + 0.33)));
-Wu = ss(blkdiag(0.1, 0.1));
-
-% Define Uncertainty (Input Multiplicative)
-Delta = ultidyn('Delta', [2 2]);
-
-% Connect Uncertainty into G_unc
-I = eye(2);
-Delta_blk = feedback(I, W_I * Delta);  % input multiplicative uncertainty
-G_pert = G_nom * Delta_blk;
-
-% Define I/O Names
+% Define uncertain perturbed plant: G_unc * (I + W_I * Delta)
+G_pert = G_unc * (eye(2) + W_I * Delta);
 G_pert.InputName = {'u1','u2'};
 G_pert.OutputName = {'y1','y2'};
+
+% Define weighting functions (same as H∞ design)
+s = tf('s');
+Wp = blkdiag(1000/(s + 0.33), 1000/(s + 0.33));
+Wu = blkdiag(tf(0.1), tf(0.1));
+
 Wp.InputName = {'y1','y2'};
 Wp.OutputName = {'ep1','ep2'};
+
 Wu.InputName = {'u1','u2'};
 Wu.OutputName = {'eu1','eu2'};
 
-% Connect everything for generalized plant
-Sum1 = sumblk('u1 = r1 - u1c');
-Sum2 = sumblk('u2 = r2 - u2c');
-Sum3 = sumblk('y1m = y1');
-Sum4 = sumblk('y2m = y2');
+% Define summing blocks for reference tracking
+Sum1 = sumblk('e1 = r1 - y1');
+Sum2 = sumblk('e2 = r2 - y2');
 
-G_all = connect(G_pert, Wp, Wu, Sum1, Sum2, Sum3, Sum4, ...
-    {'r1','r2','u1c','u2c'}, {'ep1','ep2','eu1','eu2','y1m','y2m'});
+% Build generalized plant for musyn
+% Inputs: [r1; r2; u1; u2]
+% Outputs: [ep1; ep2; eu1; eu2; y1; y2]
+P_mu = connect(G_pert, Wp, Wu, Sum1, Sum2, ...
+    {'r1','r2','u1','u2'}, {'ep1','ep2','eu1','eu2','y1','y2'});
 
-% Prepare for musyn
-nmeas = 2; % measurements (y1m, y2m)
-ncon  = 2; % controls (u1c, u2c)
-[K_mu, CL_mu, info_mu] = musyn(G_all, nmeas, ncon);
+% μ-Synthesis
+nmeas = 2; % y1, y2
+ncon = 2;  % u1, u2
 
-% Optional: reduce order to match Hinf
+[K_mu, CL_mu, info_mu] = musyn(P_mu, nmeas, ncon);
+
+% Optional: Reduce controller order
 K_mu = balred(K_mu, order(K_mu));
 
-% Save for usage in other scripts
+% Save controller
 save('K_mu.mat', 'K_mu');
 
-% Bode and Step Plots
+% Bode plot of controller
 figure;
-bode(K_mu), grid on, title('Bode plot of \mu-synthesis controller (musyn)');
+bode(K_mu), grid on;
+title('Bode Plot of \mu-Synthesis Controller');
 
-% Simulate step response from ref to outputs (2 outputs, so need input channels)
+% Get closed-loop from reference (r) to output (y)
+CL_r2y = lft(P_mu, K_mu);  % Already r → y if I/O labeled correctly
+
+% Simulate step response (Δ = 0)
 t = 0:0.01:10;
-r = ones(length(t), 2); % 2-channel unit step input
-y = lsim(CL_mu, r, t);
+r = ones(length(t), 2);  % Step input
 
+y = lsim(CL_r2y, r, t);
+
+% Plot step response
 figure;
-plot(t, y(:,1), t, y(:,2));
+plot(t, y(:,1), 'b', t, y(:,2), 'r');
 grid on;
-title('Closed-loop Step Response with \mu-controller (musyn)');
-xlabel('Time (s)'); ylabel('Output');
-legend('Pitch','Yaw');
+xlabel('Time (s)');
+ylabel('Output');
+title('Closed-Loop Step Response with \mu-Controller (Δ = 0)');
+legend('Pitch', 'Yaw');
+
+% Robust Stability & Performance (only for performance outputs)
+CL_perf = CL_mu(1:4, :);  % Extract outputs: ep1, ep2, eu1, eu2
+
+[stabmarg, ~, ~] = robuststab(CL_perf);
+disp("Robust Stability Margin: " + num2str(stabmarg.LowerBound));
+
+[perfmarg, ~, ~] = robustperf(CL_perf);
+disp("Robust Performance Margin: " + num2str(perfmarg.LowerBound));
+
